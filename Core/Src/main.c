@@ -35,7 +35,7 @@
 uint8_t x = 0;
 int y = 0;
 
-/* Buton durumlarını tutacağımız değişkenler */
+/* Variables to store button states */
 GPIO_PinState pa9_state;
 GPIO_PinState pa10_state;
 GPIO_PinState pc13_state;
@@ -84,7 +84,7 @@ int main(void)
   MX_GPIO_Init();
   
   /* USER CODE BEGIN 2 */
-  // printf("Sistem basladi. Butonlar okunuyor...\r\n");
+  // printf("System started. Reading buttons...\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -96,21 +96,21 @@ int main(void)
     /* USER CODE BEGIN 3 */
     x++;
 
-    /* 1. Buton Durumlarını Oku */
+    /* 1. Read Button States */
     pa9_state  = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
     pa10_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
     pc13_state = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
     
-    /* İstersen PB12'nin anlık çıkış durumunu da okuyabilirsin */
+    /* You can also read the momentary output state of PB12 if you want */
     pb12_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12);
 
-    /* 2. LED'i Yanıp Söndür (PB12 - LED_Pin olarak isimlendirilmiş) */
+    /* 2. Toggle the LED (PB12) */
     HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
 
-    /* NOT: USART1 donanımı Init edilmediği ve PA9/PA10 buton olarak kullanıldığı için
-      aşağıdaki UART kodlarını kilitlenmeyi önlemek amacıyla yorum satırına aldım. 
-      Eğer UART kullanacaksan butonları PA9/PA10 yerine örneğin PA0/PA1 gibi pinlere taşıyıp
-      CubeMX üzerinden USART1'i aktif etmelisin.
+    /* NOTE: Since the USART1 hardware is not initialized and PA9/PA10 are used as buttons,
+       the UART codes below are commented out to prevent a hardware fault (system lockup).
+       If you intend to use UART, you should move the buttons from PA9/PA10 to other pins 
+       (e.g., PA0/PA1) and enable USART1 via CubeMX.
     */
     
     /*
@@ -129,7 +129,7 @@ int main(void)
     }
     */
 
-    /* LED'in gözle görülür yanıp sönmesi ve buton sekmelerini (debounce) engellemek için gecikme */
+    /* Delay to make the LED blinking visible and to prevent button bouncing (debounce) */
     HAL_Delay(500);
   }
   /* USER CODE END 3 */
@@ -188,25 +188,25 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); // LED_Pin yerine PB12 garantisi
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); 
 
-  /*Configure GPIO pin : PC13 (BUTON İÇİN) */
+  /*Configure GPIO pin : PC13 (FOR BUTTON) */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // NOPULL idi, PULLDOWN yapıldı!
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // Changed to PULLDOWN
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB12 (LED ÇIKIŞI) */
-  GPIO_InitStruct.Pin = GPIO_PIN_12; // LED_Pin idi
+  /*Configure GPIO pin : PB12 (FOR LED OUTPUT) */
+  GPIO_InitStruct.Pin = GPIO_PIN_12; 
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA9 PA10 (BUTON İÇİN) */
+  /*Configure GPIO pins : PA9 PA10 (FOR BUTTONS) */
   GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // NOPULL idi, PULLDOWN yapıldı!
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // Changed to PULLDOWN
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
