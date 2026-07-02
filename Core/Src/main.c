@@ -35,11 +35,19 @@
 uint8_t x = 0;
 int y = 0;
 
-/* Variables to store button states */
+/* Button states */
 GPIO_PinState pa9_state;
 GPIO_PinState pa10_state;
 GPIO_PinState pc13_state;
-GPIO_PinState pb12_state;
+
+uint32_t previous_millis = 0;
+
+/* CHANGED to 'volatile int' for perfect GDB compatibility.
+  led_mode = 0 -> Auto Blink
+  led_mode = 1 -> Force HIGH (ON)
+  led_mode = 2 -> Force LOW  (OFF)
+*/
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -61,30 +69,19 @@ static void MX_GPIO_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-
+  
+  /* 0 = LED OFF, 1 = LED ON */
+  volatile int led_state = 0; 
+  
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
   SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  
+
   /* USER CODE BEGIN 2 */
-  // printf("System started. Reading buttons...\r\n");
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -94,43 +91,15 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    x++;
-
-    /* 1. Read Button States */
+    
+    /* 1. Read Buttons (Keeping this just in case you need them later) */
     pa9_state  = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
     pa10_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
     pc13_state = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
-    
-    /* You can also read the momentary output state of PB12 if you want */
-    pb12_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12);
 
-    /* 2. Toggle the LED (PB12) */
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
+    /* 2. Direct LED Control (Absolutely NO if/else codes!) */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, led_state);
 
-    /* NOTE: Since the USART1 hardware is not initialized and PA9/PA10 are used as buttons,
-       the UART codes below are commented out to prevent a hardware fault (system lockup).
-       If you intend to use UART, you should move the buttons from PA9/PA10 to other pins 
-       (e.g., PA0/PA1) and enable USART1 via CubeMX.
-    */
-    
-    /*
-    uint8_t rx_data;
-    if (USART1->SR & USART_SR_RXNE)
-    {
-      rx_data = (uint8_t)(USART1->DR & 0xFF);
-      printf("Received: %c\r\n", rx_data);
-      if (rx_data == 'y' || rx_data == 'Y') {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
-      } else if (rx_data == 'n' || rx_data == 'N') {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-      } else if (rx_data == 't' || rx_data == 'T') {
-        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
-      }
-    }
-    */
-
-    /* Delay to make the LED blinking visible and to prevent button bouncing (debounce) */
-    HAL_Delay(500);
   }
   /* USER CODE END 3 */
 }
@@ -193,7 +162,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : PC13 (FOR BUTTON) */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // Changed to PULLDOWN
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PB12 (FOR LED OUTPUT) */
@@ -206,7 +175,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : PA9 PA10 (FOR BUTTONS) */
   GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // Changed to PULLDOWN
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
