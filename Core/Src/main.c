@@ -1,18 +1,8 @@
-/* USER CODE BEGIN Header */
+﻿/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
   * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -43,11 +33,13 @@
 
 /* USER CODE BEGIN PV */
 uint8_t x = 0;
+int y = 0;
+
+/* Buton durumlarını tutacağımız değişkenler */
 GPIO_PinState pa9_state;
 GPIO_PinState pa10_state;
 GPIO_PinState pc13_state;
 GPIO_PinState pb12_state;
-int y = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,7 +60,6 @@ static void MX_GPIO_Init(void);
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -91,8 +82,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  
   /* USER CODE BEGIN 2 */
-  printf("USART1 terminal ready. Send 'y' to turn LED on, 'n' to turn LED off, 't' to toggle.\r\n");
+  // printf("Sistem basladi. Butonlar okunuyor...\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -104,11 +96,24 @@ int main(void)
     /* USER CODE BEGIN 3 */
     x++;
 
-    pa9_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
+    /* 1. Buton Durumlarını Oku */
+    pa9_state  = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
     pa10_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
     pc13_state = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+    
+    /* İstersen PB12'nin anlık çıkış durumunu da okuyabilirsin */
     pb12_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12);
 
+    /* 2. LED'i Yanıp Söndür (PB12 - LED_Pin olarak isimlendirilmiş) */
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
+
+    /* NOT: USART1 donanımı Init edilmediği ve PA9/PA10 buton olarak kullanıldığı için
+      aşağıdaki UART kodlarını kilitlenmeyi önlemek amacıyla yorum satırına aldım. 
+      Eğer UART kullanacaksan butonları PA9/PA10 yerine örneğin PA0/PA1 gibi pinlere taşıyıp
+      CubeMX üzerinden USART1'i aktif etmelisin.
+    */
+    
+    /*
     uint8_t rx_data;
     if (USART1->SR & USART_SR_RXNE)
     {
@@ -116,17 +121,17 @@ int main(void)
       printf("Received: %c\r\n", rx_data);
       if (rx_data == 'y' || rx_data == 'Y') {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
-        printf("LED ON\r\n");
       } else if (rx_data == 'n' || rx_data == 'N') {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-        printf("LED OFF\r\n");
       } else if (rx_data == 't' || rx_data == 'T') {
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
-        printf("LED TOGGLED\r\n");
       }
     }
+    */
 
-    HAL_Delay(10);
+    /* LED'in gözle görülür yanıp sönmesi ve buton sekmelerini (debounce) engellemek için gecikme */
+    HAL_Delay(500);
+  }
   /* USER CODE END 3 */
 }
 
@@ -139,9 +144,6 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
@@ -154,8 +156,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -188,25 +188,25 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); // LED_Pin yerine PB12 garantisi
 
-  /*Configure GPIO pin : PC13 */
+  /*Configure GPIO pin : PC13 (BUTON İÇİN) */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // NOPULL idi, PULLDOWN yapıldı!
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LED_Pin */
-  GPIO_InitStruct.Pin = LED_Pin;
+  /*Configure GPIO pin : PB12 (LED ÇIKIŞI) */
+  GPIO_InitStruct.Pin = GPIO_PIN_12; // LED_Pin idi
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA9 PA10 */
+  /*Configure GPIO pins : PA9 PA10 (BUTON İÇİN) */
   GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN; // NOPULL idi, PULLDOWN yapıldı!
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -225,26 +225,17 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
   /* USER CODE END Error_Handler_Debug */
 }
-#ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+
+#ifdef  USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
