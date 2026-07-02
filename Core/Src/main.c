@@ -42,10 +42,9 @@ GPIO_PinState pc13_state;
 
 uint32_t previous_millis = 0;
 
+volatile int led_state = 2; 
+
 /* CHANGED to 'volatile int' for perfect GDB compatibility.
-  led_mode = 0 -> Auto Blink
-  led_mode = 1 -> Force HIGH (ON)
-  led_mode = 2 -> Force LOW  (OFF)
 */
 
 /* USER CODE END PV */
@@ -71,7 +70,7 @@ int main(void)
   /* USER CODE BEGIN 1 */
   
   /* 0 = LED OFF, 1 = LED ON */
-  volatile int led_state = 0; 
+  
   
   /* USER CODE END 1 */
 
@@ -92,14 +91,29 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     
-    /* 1. Read Buttons (Keeping this just in case you need them later) */
+    /* 1. Read Buttons */
     pa9_state  = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
     pa10_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
     pc13_state = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
 
-    /* 2. Direct LED Control (Absolutely NO if/else codes!) */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, led_state);
-
+    /* 2. LED Control Logic */
+    if (led_state == 0) 
+    {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); // Force OFF
+    }
+    else if (led_state == 1) 
+    {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);   // Force ON
+    }
+    else if (led_state == 2) 
+    {
+      /* 3. Blinking Timer Logic (Runs only if state is 2) */
+      if (HAL_GetTick() - previous_millis >= 500)  // 500ms delay
+      {
+        previous_millis = HAL_GetTick(); // Reset stopwatch
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
+      }
+    }
   }
   /* USER CODE END 3 */
 }
