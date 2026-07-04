@@ -12,6 +12,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include <stdlib.h> // atoi() fonksiyonu için
+#include <string.h> // memset() fonksiyonu için
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -32,6 +35,8 @@
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim2;
 
+UART_HandleTypeDef huart3;
+
 /* USER CODE BEGIN PV */
 uint8_t x = 0;
 int y = 0;
@@ -51,8 +56,13 @@ GPIO_PinState pc13_state;
 
 volatile int led_state = 2; 
 
-/* CHANGED to 'volatile int' for perfect GDB compatibility.
-*/
+/* CHANGED to 'volatile int' for perfect GDB compatibility. */
+/* UART Haberleşme Değişkenleri */
+
+uint8_t rx_byte;          // Gelen tek bir karakteri tutar
+char rx_buffer[10];       // Gelen mesajı biriktirdiğimiz dizi (Örn: "500")
+uint8_t rx_index = 0;     // Dizinin neresinde olduğumuzu tutar
+
 
 /* USER CODE END PV */
 
@@ -60,6 +70,7 @@ volatile int led_state = 2;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -102,9 +113,15 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM2_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+
   HAL_TIM_Base_Start_IT(&htim2);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
+  
+  /* UART3 üzerinden 1 byte'lık veri geldiğinde kesme (interrupt) üretmesini söyle */
+  HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -238,6 +255,39 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -300,6 +350,50 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
   }
 }
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3)
+  {
+    /* Eğer gelen karakter 'Enter' tuşu ise ( \r veya \n ) mesaj bitmiştir */
+    if (rx_byte == '\r' || rx_byte == '\n')
+    {
+      if (rx_index > 0) 
+      {
+        rx_buffer[rx_index] = '\0'; // String'i sonlandır
+        
+        /* Gelen metni (örn: "800") tam sayıya (integer) çevir */
+        int temp_duty = atoi(rx_buffer); 
+        
+        /* Güvenlik: Değerin 0 ile 1000 arasında olduğundan emin ol */
+        if (temp_duty < 0) temp_duty = 0;
+        if (temp_duty > 1000) temp_duty = 1000;
+        
+        pwm_duty = temp_duty; // Yeni parlaklığı ata
+        
+        /* Yeni parlaklığı Timer'a yaz */
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
+        
+        /* Bir sonraki mesaj için buffer'ı sıfırla */
+        rx_index = 0;
+        memset(rx_buffer, 0, sizeof(rx_buffer));
+      }
+    }
+    else
+    {
+      /* Gelen karakter Enter değilse, diziye kaydet ve sınırı aşmasını engelle */
+      if (rx_index < 9)
+      {
+        rx_buffer[rx_index] = rx_byte;
+        rx_index++;
+      }
+    }
+    
+    /* Tekrar dinlemeye başla (Çok Önemli!) */
+    HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
+  }
+}
+
 
 /* USER CODE END 4 */
 
