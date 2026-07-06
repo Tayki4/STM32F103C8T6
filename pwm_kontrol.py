@@ -17,10 +17,16 @@ except Exception as e:
 def parlaklik_gonder(deger):
     """Slider hareket ettikçe bu fonksiyon tetiklenir."""
     if ser and ser.is_open:
-        # C kodumuz Enter (\r) beklediği için sayının sonuna ekliyoruz (Örn: "500\r")
-        komut = f"{deger}\r"
-        ser.write(komut.encode('utf-8'))
-
+        # Kaydırma çubuğundaki sayıyı (Örn: 1000) integer'a çevir
+        sayi = int(deger)
+        
+        # Sayıyı 2 byte'lık ham veriye (Raw Bytes) çevir (Big Endian formatında)
+        # Örn: 1000 sayısı -> 0x03 ve 0xE8 olarak iki bayta bölünür
+        ham_veri = sayi.to_bytes(2, byteorder='big')
+        
+        # Doğrudan bitleri (byte'ları) porttan yolla (encode etmeye gerek yok)
+        ser.write(ham_veri)
+        
 # --- ARAYÜZ TASARIMI ---
 pencere = tk.Tk()
 pencere.title("STM32 PWM Kontrol Paneli")

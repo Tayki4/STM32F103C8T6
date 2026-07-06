@@ -12,9 +12,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include <stdlib.h> // atoi() fonksiyonu için
-#include <string.h> // memset() fonksiyonu için
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,6 +30,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+CAN_HandleTypeDef hcan;
+
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart3;
@@ -47,7 +46,8 @@ int y = 0;
    500  = %50 Brightness
    1000 = %100 Brightness
 */
-volatile int pwm_duty = 0;
+volatile int pwm_duty = 0; 
+uint8_t rx_data[2]; // Sadece 2 byte (16 bit) ham veri tutacak
 
 /* Button states */
 GPIO_PinState pa9_state;
@@ -63,6 +63,22 @@ uint8_t rx_byte;          // Gelen tek bir karakteri tutar
 char rx_buffer[10];       // Gelen mesajı biriktirdiğimiz dizi (Örn: "500")
 uint8_t rx_index = 0;     // Dizinin neresinde olduğumuzu tutar
 
+CAN_TxHeaderTypeDef TxHeader;
+uint8_t TxData[8];    // 8 Byte'lık CAN veri çerçevesi (Frame)
+uint32_t TxMailbox;   // Verinin yollanacağı posta kutusu
+
+
+CAN_TxHeaderTypeDef TxHeader;
+uint8_t TxData[8];
+uint32_t TxMailbox;
+
+/* Bilgisayardan gelen verileri okumak için gereken değişkenler */
+CAN_RxHeaderTypeDef RxHeader;
+uint8_t RxData[8];
+
+/* 4 Adet Sabit CAN ID Tanımlaması (Standart 11-bit ID'ler) */
+const uint32_t FIXED_IDS[4] = {0x10A, 0x20B, 0x30C, 0x40D};
+
 
 /* USER CODE END PV */
 
@@ -71,6 +87,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_CAN_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -114,13 +131,31 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM2_Init();
   MX_USART3_UART_Init();
+  MX_CAN_Init();
   /* USER CODE BEGIN 2 */
-
-  HAL_TIM_Base_Start_IT(&htim2);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
   
-  /* UART3 üzerinden 1 byte'lık veri geldiğinde kesme (interrupt) üretmesini söyle */
-  HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
+  /* Tam 2 Byte'lık veri paketi beklediğimizi belirtiyoruz */
+  HAL_UART_Receive_IT(&huart3, rx_data, 2);
+
+/* CAN Filtre Ayarları (Tüm ID'leri kabul edecek şekilde varsayılan ayar) */
+  CAN_FilterTypeDef canfilterconfig;
+  canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
+  canfilterconfig.FilterBank = 0;
+  canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
+  canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
+  canfilterconfig.FilterIdHigh = 0x0000;
+  canfilterconfig.FilterIdLow = 0x0000;
+  canfilterconfig.FilterMaskIdHigh = 0x0000;
+  canfilterconfig.FilterMaskIdLow = 0x0000;
+  canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+  HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
+
+  /* CAN Donanımını Başlat */
+  HAL_CAN_Start(&hcan);
+
+/* 2. CAN RX (Okuma) Kesmesini Aktif Et (BİLGİSAYARDAN VERİ ALMAK İÇİN KRİTİK) */
+  HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
 
   /* USER CODE END 2 */
 
@@ -151,6 +186,37 @@ int main(void)
     }
     /* If led_state == 2, the while loop does nothing to the LED. 
        The TIM2 Interrupt handles it! */
+
+
+  static uint8_t id_index = 0; // Hangi ID'de olduğumuzu takip eder
+    
+    uint32_t pseudo_random = HAL_GetTick();
+
+    /* Mesaj Başlığı (Header) Ayarları */
+    TxHeader.DLC = 8;                         
+    TxHeader.IDE = CAN_ID_STD;                
+    TxHeader.RTR = CAN_RTR_DATA;              
+    TxHeader.StdId = FIXED_IDS[id_index];  // 4 Sabit ID'den birini seç
+
+    /* Rastgele Veri (Frame) Üretimi */
+    TxData[0] = (pseudo_random >> 24) & 0xFF;
+    TxData[1] = (pseudo_random >> 16) & 0xFF;
+    TxData[2] = (pseudo_random >> 8) & 0xFF;
+    TxData[3] = pseudo_random & 0xFF;
+    TxData[4] = (pseudo_random * 3) & 0xFF;
+    TxData[5] = (pseudo_random * 7) & 0xFF;
+    TxData[6] = (pseudo_random * 11) & 0xFF;
+    TxData[7] = (pseudo_random * 13) & 0xFF;
+
+    /* Mesajı Gönder */
+    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+
+    /* Bir sonraki ID'ye geç (0-1-2-3-0...) */
+    id_index++;
+    if (id_index >= 4) id_index = 0;
+
+    HAL_Delay(500); // 500 ms bekle
+
 
   }
   /* USER CODE END 3 */
@@ -193,6 +259,43 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief CAN Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN_Init(void)
+{
+
+  /* USER CODE BEGIN CAN_Init 0 */
+
+  /* USER CODE END CAN_Init 0 */
+
+  /* USER CODE BEGIN CAN_Init 1 */
+
+  /* USER CODE END CAN_Init 1 */
+  hcan.Instance = CAN1;
+  hcan.Init.Prescaler = 9;
+  hcan.Init.Mode = CAN_MODE_NORMAL;
+  hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan.Init.TimeSeg1 = CAN_BS1_12TQ;
+  hcan.Init.TimeSeg2 = CAN_BS2_3TQ;
+  hcan.Init.TimeTriggeredMode = DISABLE;
+  hcan.Init.AutoBusOff = DISABLE;
+  hcan.Init.AutoWakeUp = DISABLE;
+  hcan.Init.AutoRetransmission = DISABLE;
+  hcan.Init.ReceiveFifoLocked = DISABLE;
+  hcan.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN_Init 2 */
+
+  /* USER CODE END CAN_Init 2 */
+
 }
 
 /**
@@ -333,64 +436,50 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-/**
-  * @brief  Period elapsed callback in non blocking mode
-  * @param  htim : TIM handle
-  */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-  /* Check if the interrupt was triggered by TIM2 */
-  if (htim->Instance == TIM2)
-  {
-    /* Only blink the LED if the state is set to 2 */
-    if (led_state == 2) 
-    {
-      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_12);
-    }
-  }
-}
-
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {
-    /* Eğer gelen karakter 'Enter' tuşu ise ( \r veya \n ) mesaj bitmiştir */
-    if (rx_byte == '\r' || rx_byte == '\n')
-    {
-      if (rx_index > 0) 
-      {
-        rx_buffer[rx_index] = '\0'; // String'i sonlandır
-        
-        /* Gelen metni (örn: "800") tam sayıya (integer) çevir */
-        int temp_duty = atoi(rx_buffer); 
-        
-        /* Güvenlik: Değerin 0 ile 1000 arasında olduğundan emin ol */
-        if (temp_duty < 0) temp_duty = 0;
-        if (temp_duty > 1000) temp_duty = 1000;
-        
-        pwm_duty = temp_duty; // Yeni parlaklığı ata
-        
-        /* Yeni parlaklığı Timer'a yaz */
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
-        
-        /* Bir sonraki mesaj için buffer'ı sıfırla */
-        rx_index = 0;
-        memset(rx_buffer, 0, sizeof(rx_buffer));
-      }
-    }
-    else
-    {
-      /* Gelen karakter Enter değilse, diziye kaydet ve sınırı aşmasını engelle */
-      if (rx_index < 9)
-      {
-        rx_buffer[rx_index] = rx_byte;
-        rx_index++;
-      }
-    }
+    /* Gelen 2 Byte'ı birleştirip 16 bitlik sayı elde et:
+       (High Byte'ı 8 bit sola kaydır ve Low Byte ile OR işlemine sok) */
+    uint16_t temp_duty = (rx_data[0] << 8) | rx_data[1];
     
-    /* Tekrar dinlemeye başla (Çok Önemli!) */
-    HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
+    /* Sınır koruması (0-1000) */
+    if (temp_duty > 1000) temp_duty = 1000;
+    
+    pwm_duty = temp_duty;
+    
+    /* Doğrudan donanıma yaz */
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
+    
+    /* Sonraki 2 Byte'ı dinlemeye başla */
+    HAL_UART_Receive_IT(&huart3, rx_data, 2);
+  }
+}
+
+/**
+  * @brief  CAN RX FIFO 0 Mesaj Geldi Kesmesi
+  */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  /* Gelen mesajı oku ve RxHeader ile RxData değişkenlerine kaydet */
+  if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+  {
+    /* BİLGİSAYARDAN GELEN VERİ ŞU AN RxData DİZİSİNİN İÇİNDE! */
+    
+    /* Örnek Kontrol: Eğer bilgisayar 0x555 ID'si ile mesaj gönderirse 
+       ve ilk verisi (RxData[0]) 1 ise, LED parlaklığını %100 yap */
+    if (RxHeader.StdId == 0x555)
+    {
+       if (RxData[0] == 1) 
+       {
+           __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 1000); 
+       } 
+       else if (RxData[0] == 0)
+       {
+           __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
+       }
+    }
   }
 }
 
