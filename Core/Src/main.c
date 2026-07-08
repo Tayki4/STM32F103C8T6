@@ -215,7 +215,7 @@ int main(void)
     id_index++;
     if (id_index >= 4) id_index = 0;
 
-    HAL_Delay(500); // 500 ms bekle
+    HAL_Delay(50); // 50 ms bekle
 
 
   }
