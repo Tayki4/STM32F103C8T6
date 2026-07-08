@@ -1,5 +1,6 @@
 import tkinter as tk
 import tkinter.scrolledtext as st
+from tkinter import ttk  # Tablo görünümü (Treeview) için eklendi
 import can
 
 # --- 1. PCAN BAĞLANTISINI KUR ---
@@ -16,27 +17,32 @@ led_acik_mi = False
 # --- 2. CAN HATTINI DİNLEME (ARKA PLAN) ---
 def can_mesajlarini_dinle():
     if bus is not None:
-        # Kuyruktaki tüm bekleyen mesajları hiç beklemeden (0.0 sn) hızlıca al
         while True:
             msg = bus.recv(0.0)
             if msg is None:
-                break # Okunacak yeni mesaj kalmadıysa döngüden çık
+                break 
             
-            # Sadece kendi gönderdiğimiz (0x555) mesajları ekranda görmezden gel
             if msg.arbitration_id != 0x555:
                 id_hex = hex(msg.arbitration_id).upper()
                 veri_hex = " ".join(f"{b:02X}" for b in msg.data)
+                str_id = str(msg.arbitration_id) # Tablodaki satır kimliği için
                 
-                # Ekrana formatlı şekilde yazdır
+                # --- A. AKAN LOG EKRANINI GÜNCELLE ---
                 satir = f"ID: {id_hex} | Veri: {veri_hex}\n"
                 gelen_kutusu.insert(tk.END, satir)
-                gelen_kutusu.see(tk.END) # Otomatik olarak en alta kaydır
+                gelen_kutusu.see(tk.END) 
                 
-                # Kutu çok dolup bilgisayarı kastırmasın diye ilk satırları sil (Son 50 mesajı tut)
                 if int(gelen_kutusu.index('end-1c').split('.')[0]) > 50:
                     gelen_kutusu.delete('1.0', '2.0')
 
-    # Bu fonksiyonu 20 milisaniye sonra arka planda tekrar çağır
+                # --- B. SABİT GÖSTERGE PANELİNİ GÜNCELLE ---
+                # Eğer bu ID tabloda zaten varsa, sadece verisini güncelle
+                if tablo.exists(str_id):
+                    tablo.item(str_id, values=(id_hex, veri_hex))
+                # Eğer bu ID ilk defa geliyorsa tabloya yeni satır olarak ekle
+                else:
+                    tablo.insert('', 'end', iid=str_id, values=(id_hex, veri_hex))
+
     root.after(20, can_mesajlarini_dinle)
 
 # --- 3. GÖNDERME FONKSİYONLARI ---
@@ -70,18 +76,17 @@ def led_ac_kapat():
 
 # --- 4. GÖRSEL ARAYÜZ (GUI) TASARIMI ---
 root = tk.Tk()
-root.title("CAN Bus - STM32 Kontrol Merkezi")
-root.geometry("450x450") # Yeni penceremiz artık daha büyük
+root.title("CAN Bus - Gelişmiş Kontrol ve İzleme Merkezi")
+root.geometry("450x650") # Üç farklı bölüm sığsın diye boyutu uzattık
 root.configure(padx=20, pady=10)
 
-# Durum Bildirim Etiketi
 durum_label = tk.Label(root, text=baglanti_durumu, font=("Arial", 10, "bold"), 
                        fg="green" if bus else "red")
 durum_label.pack(pady=5)
 
-# --- KONTROL BÖLÜMÜ ---
+# --- BÖLÜM 1: İLETİM (TX) KONTROL ---
 frame_kontrol = tk.LabelFrame(root, text=" İletim (TX) - LED Kontrol ", padx=10, pady=10)
-frame_kontrol.pack(fill="x", pady=10)
+frame_kontrol.pack(fill="x", pady=5)
 
 slider = tk.Scale(frame_kontrol, from_=0, to=1000, orient=tk.HORIZONTAL, length=300, 
                   command=parlaklik_gonder, tickinterval=250)
@@ -92,15 +97,26 @@ btn_ac_kapat = tk.Button(frame_kontrol, text="Tam Güç Aç", font=("Arial", 10,
                          command=led_ac_kapat)
 btn_ac_kapat.pack(pady=5)
 
-# --- DİNLEME BÖLÜMÜ ---
-frame_dinleme = tk.LabelFrame(root, text=" Alım (RX) - Gelen CAN Mesajları ", padx=10, pady=10)
-frame_dinleme.pack(fill="both", expand=True)
+# --- BÖLÜM 2: SABİT GÜNCEL VERİ TABLOSU (YENİ) ---
+frame_guncel = tk.LabelFrame(root, text=" Sabit Gösterge - Son Değerler ", padx=10, pady=10)
+frame_guncel.pack(fill="x", pady=5)
 
-# Otomatik kaydırmalı (ScrolledText) metin kutusu
-gelen_kutusu = st.ScrolledText(frame_dinleme, width=40, height=10, font=("Courier New", 9))
+# Treeview tablosunun ayarları
+tablo = ttk.Treeview(frame_guncel, columns=("ID", "Veri"), show="headings", height=4)
+tablo.heading("ID", text="CAN ID")
+tablo.heading("Veri", text="Son Veri (Hex)")
+tablo.column("ID", width=100, anchor="center")
+tablo.column("Veri", width=250, anchor="center")
+tablo.pack(fill="x")
+
+# --- BÖLÜM 3: AKAN LOG EKRANI ---
+frame_dinleme = tk.LabelFrame(root, text=" Akan Geçmiş (Log) Ekranı ", padx=10, pady=10)
+frame_dinleme.pack(fill="both", expand=True, pady=5)
+
+gelen_kutusu = st.ScrolledText(frame_dinleme, width=40, height=8, font=("Courier New", 9))
 gelen_kutusu.pack(fill="both", expand=True)
 
-# Dinleme döngüsünü başlat (Bu satır sihrin başladığı yerdir)
+# Arka plan dinleme döngüsünü başlat
 root.after(20, can_mesajlarini_dinle)
 
 # Arayüzü Başlat
