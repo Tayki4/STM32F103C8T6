@@ -1,4 +1,5 @@
 import tkinter as tk
+import tkinter.scrolledtext as st
 import can
 
 # --- 1. PCAN BAĞLANTISINI KUR ---
@@ -10,25 +11,47 @@ except Exception as e:
     baglanti_durumu = "❌ PCAN Hatası! (PCAN-View Kapalı mı?)"
     print("Hata Detayı:", e)
 
-# Küresel değişken (LED'in durumunu takip etmek için)
 led_acik_mi = False
 
-# --- 2. SLIDER HAREKET ETTİKÇE ÇALIŞACAK FONKSİYON ---
+# --- 2. CAN HATTINI DİNLEME (ARKA PLAN) ---
+def can_mesajlarini_dinle():
+    if bus is not None:
+        # Kuyruktaki tüm bekleyen mesajları hiç beklemeden (0.0 sn) hızlıca al
+        while True:
+            msg = bus.recv(0.0)
+            if msg is None:
+                break # Okunacak yeni mesaj kalmadıysa döngüden çık
+            
+            # Sadece kendi gönderdiğimiz (0x555) mesajları ekranda görmezden gel
+            if msg.arbitration_id != 0x555:
+                id_hex = hex(msg.arbitration_id).upper()
+                veri_hex = " ".join(f"{b:02X}" for b in msg.data)
+                
+                # Ekrana formatlı şekilde yazdır
+                satir = f"ID: {id_hex} | Veri: {veri_hex}\n"
+                gelen_kutusu.insert(tk.END, satir)
+                gelen_kutusu.see(tk.END) # Otomatik olarak en alta kaydır
+                
+                # Kutu çok dolup bilgisayarı kastırmasın diye ilk satırları sil (Son 50 mesajı tut)
+                if int(gelen_kutusu.index('end-1c').split('.')[0]) > 50:
+                    gelen_kutusu.delete('1.0', '2.0')
+
+    # Bu fonksiyonu 20 milisaniye sonra arka planda tekrar çağır
+    root.after(20, can_mesajlarini_dinle)
+
+# --- 3. GÖNDERME FONKSİYONLARI ---
 def parlaklik_gonder(val):
     global led_acik_mi
-    
     deger = int(val)
     
-    # PCAN bağlıysa CAN mesajını gönder
     if bus is not None:
         veri = [(deger >> 8) & 0xFF, deger & 0xFF]
         msg = can.Message(arbitration_id=0x555, data=veri, is_extended_id=False)
         try:
             bus.send(msg)
         except can.CanError:
-            print("Mesaj CAN hattına gönderilemedi!")
+            pass
             
-    # Arayüz Senkronizasyonu (Slider'a göre butonu güncelle)
     if deger == 0:
         btn_ac_kapat.config(text="Tam Güç Aç", bg="green", fg="white")
         led_acik_mi = False
@@ -36,46 +59,49 @@ def parlaklik_gonder(val):
         btn_ac_kapat.config(text="Tamamen Kapat", bg="red", fg="white")
         led_acik_mi = True
     else:
-        # Ara değerlerdeyken butonu kırmızı yapıp kapatmaya hazır hale getir
         btn_ac_kapat.config(text="Tamamen Kapat", bg="red", fg="white")
         led_acik_mi = True
 
-# --- 3. BUTON ÇALIŞACAK FONKSİYON ---
 def led_ac_kapat():
     if led_acik_mi:
-        # Açıksa tamamen kapat -> Slider'ı 0'a çek 
-        # (Bu işlem otomatik olarak parlaklik_gonder(0) fonksiyonunu tetikler)
         slider.set(0)
     else:
-        # Kapalıysa tam güç aç -> Slider'ı 1000'e çek
-        # (Bu işlem otomatik olarak parlaklik_gonder(1000) fonksiyonunu tetikler)
         slider.set(1000)
 
 # --- 4. GÖRSEL ARAYÜZ (GUI) TASARIMI ---
 root = tk.Tk()
 root.title("CAN Bus - STM32 Kontrol Merkezi")
-root.geometry("380x260") # Buton sığsın diye pencereyi biraz uzattık
-root.configure(padx=20, pady=20)
+root.geometry("450x450") # Yeni penceremiz artık daha büyük
+root.configure(padx=20, pady=10)
 
 # Durum Bildirim Etiketi
 durum_label = tk.Label(root, text=baglanti_durumu, font=("Arial", 10, "bold"), 
                        fg="green" if bus else "red")
 durum_label.pack(pady=5)
 
-# Başlık Etiketi
-baslik_label = tk.Label(root, text="Kırmızı LED Parlaklığı (PA3)", font=("Arial", 12))
-baslik_label.pack(pady=5)
+# --- KONTROL BÖLÜMÜ ---
+frame_kontrol = tk.LabelFrame(root, text=" İletim (TX) - LED Kontrol ", padx=10, pady=10)
+frame_kontrol.pack(fill="x", pady=10)
 
-# Kaydırma Çubuğu (Slider)
-slider = tk.Scale(root, from_=0, to=1000, orient=tk.HORIZONTAL, length=300, 
+slider = tk.Scale(frame_kontrol, from_=0, to=1000, orient=tk.HORIZONTAL, length=300, 
                   command=parlaklik_gonder, tickinterval=250)
-slider.pack(pady=10)
+slider.pack()
 
-# Aç/Kapat Butonu
-btn_ac_kapat = tk.Button(root, text="Tam Güç Aç", font=("Arial", 10, "bold"), 
-                         bg="green", fg="white", width=15, height=2, 
+btn_ac_kapat = tk.Button(frame_kontrol, text="Tam Güç Aç", font=("Arial", 10, "bold"), 
+                         bg="green", fg="white", width=15, height=1, 
                          command=led_ac_kapat)
 btn_ac_kapat.pack(pady=5)
+
+# --- DİNLEME BÖLÜMÜ ---
+frame_dinleme = tk.LabelFrame(root, text=" Alım (RX) - Gelen CAN Mesajları ", padx=10, pady=10)
+frame_dinleme.pack(fill="both", expand=True)
+
+# Otomatik kaydırmalı (ScrolledText) metin kutusu
+gelen_kutusu = st.ScrolledText(frame_dinleme, width=40, height=10, font=("Courier New", 9))
+gelen_kutusu.pack(fill="both", expand=True)
+
+# Dinleme döngüsünü başlat (Bu satır sihrin başladığı yerdir)
+root.after(20, can_mesajlarini_dinle)
 
 # Arayüzü Başlat
 root.mainloop()
