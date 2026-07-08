@@ -161,65 +161,61 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  
+  uint32_t last_can_tx = 0; // Kronometre değişkenimiz
+
   while (1)
   {
-    /* GDB'den değiştirilen pwm_duty değerini TIM2 CH4'e yaz */
+    /* 1. KIRMIZI LED (PA3) GÜNCELLEMESİ (Her an kesintisiz çalışır) */
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
     
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
     
-    /* 1. Read Buttons */
-    pa9_state  = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9);
-    pa10_state = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10);
-    pc13_state = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
-
-    /* 2. Direct LED Control (Manual Modes Only) */
+    /* 2. YEŞİL LED (PB12) GÜNCELLEMESİ (Sadece GDB'den kontrol edilir) */
     if (led_state == 0) 
     {
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET); // Force OFF
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
     }
     else if (led_state == 1) 
     {
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);   // Force ON
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
     }
-    /* If led_state == 2, the while loop does nothing to the LED. 
-       The TIM2 Interrupt handles it! */
 
+    /* 3. CAN BUS GÖNDERİMİ (HAL_Delay OLMADAN KRONOMETRE İLE) */
+    /* İşlemci burada donmaz! Sadece saate bakar, 50ms geçtiyse içeri girer. */
+    if (HAL_GetTick() - last_can_tx >= 50)
+    {
+        last_can_tx = HAL_GetTick(); // Saati sıfırla
+        
+        static uint8_t id_index = 0; 
+        uint32_t pseudo_random = HAL_GetTick();
 
-  static uint8_t id_index = 0; // Hangi ID'de olduğumuzu takip eder
+        TxHeader.DLC = 8;                         
+        TxHeader.IDE = CAN_ID_STD;                
+        TxHeader.RTR = CAN_RTR_DATA;              
+        TxHeader.StdId = FIXED_IDS[id_index];  
+
+        TxData[0] = (pseudo_random >> 24) & 0xFF;
+        TxData[1] = (pseudo_random >> 16) & 0xFF;
+        TxData[2] = (pseudo_random >> 8) & 0xFF;
+        TxData[3] = pseudo_random & 0xFF;
+        TxData[4] = (pseudo_random * 3) & 0xFF;
+        TxData[5] = (pseudo_random * 7) & 0xFF;
+        TxData[6] = (pseudo_random * 11) & 0xFF;
+        TxData[7] = (pseudo_random * 13) & 0xFF;
+
+        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+
+        id_index++;
+        if (id_index >= 4) id_index = 0;
+    }
     
-    uint32_t pseudo_random = HAL_GetTick();
-
-    /* Mesaj Başlığı (Header) Ayarları */
-    TxHeader.DLC = 8;                         
-    TxHeader.IDE = CAN_ID_STD;                
-    TxHeader.RTR = CAN_RTR_DATA;              
-    TxHeader.StdId = FIXED_IDS[id_index];  // 4 Sabit ID'den birini seç
-
-    /* Rastgele Veri (Frame) Üretimi */
-    TxData[0] = (pseudo_random >> 24) & 0xFF;
-    TxData[1] = (pseudo_random >> 16) & 0xFF;
-    TxData[2] = (pseudo_random >> 8) & 0xFF;
-    TxData[3] = pseudo_random & 0xFF;
-    TxData[4] = (pseudo_random * 3) & 0xFF;
-    TxData[5] = (pseudo_random * 7) & 0xFF;
-    TxData[6] = (pseudo_random * 11) & 0xFF;
-    TxData[7] = (pseudo_random * 13) & 0xFF;
-
-    /* Mesajı Gönder */
-    HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-
-    /* Bir sonraki ID'ye geç (0-1-2-3-0...) */
-    id_index++;
-    if (id_index >= 4) id_index = 0;
-
-    HAL_Delay(50); // 50 ms bekle
-
-
+    /* İşlemci geri kalan zamanda serbesttir, Python'dan gelen verileri anında okur! */
   }
   /* USER CODE END 3 */
+
 }
 
 /**
@@ -440,49 +436,36 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART3)
   {
-    /* Gelen 2 Byte'ı birleştirip 16 bitlik sayı elde et:
-       (High Byte'ı 8 bit sola kaydır ve Low Byte ile OR işlemine sok) */
     uint16_t temp_duty = (rx_data[0] << 8) | rx_data[1];
-    
-    /* Sınır koruması (0-1000) */
     if (temp_duty > 1000) temp_duty = 1000;
     
     pwm_duty = temp_duty;
     
-    /* Doğrudan donanıma yaz */
+    /* Anında tepki için doğrudan donanıma yaz */
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
     
-    /* Sonraki 2 Byte'ı dinlemeye başla */
     HAL_UART_Receive_IT(&huart3, rx_data, 2);
   }
 }
 
-/**
-  * @brief  CAN RX FIFO 0 Mesaj Geldi Kesmesi
-  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
-  /* Gelen mesajı oku ve RxHeader ile RxData değişkenlerine kaydet */
   if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
   {
-    /* BİLGİSAYARDAN GELEN VERİ ŞU AN RxData DİZİSİNİN İÇİNDE! */
-    
-    /* Örnek Kontrol: Eğer bilgisayar 0x555 ID'si ile mesaj gönderirse 
-       ve ilk verisi (RxData[0]) 1 ise, LED parlaklığını %100 yap */
+    /* Eğer mesaj bizim Python arayüzünden (0x555) geliyorsa */
     if (RxHeader.StdId == 0x555)
     {
-       if (RxData[0] == 1) 
-       {
-           __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 1000); 
-       } 
-       else if (RxData[0] == 0)
-       {
-           __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
-       }
+       /* Gelen ilk 2 byte'ı birleştirip 16 bitlik sayı (0-1000) elde et */
+       uint16_t temp_duty = (RxData[0] << 8) | RxData[1];
+       
+       /* Sınır koruması */
+       if (temp_duty > 1000) temp_duty = 1000;
+       
+       /* Doğrudan parlaklık değişkenine yaz */
+       pwm_duty = temp_duty;
     }
   }
 }
-
 
 /* USER CODE END 4 */
 
