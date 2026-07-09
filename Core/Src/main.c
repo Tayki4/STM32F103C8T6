@@ -8,6 +8,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -32,7 +33,11 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan;
 
+osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
+osThreadId LEDTaskHandle;
+osThreadId CANTaskHandle;
+osThreadId UARTTaskHandle;
 uint8_t x = 0;
 int y = 0;
 
@@ -86,9 +91,14 @@ static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_CAN_Init(void);
 static void MX_USART1_UART_Init(void);
+void StartDefaultTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 void USART1_SendChar(char c);
 void USART1_SendString(const char *str);
+void StartLEDTask(void const * argument);
+void StartCANTask(void const * argument);
+void StartUARTTask(void const * argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -161,88 +171,52 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* definition and creation of LEDTask */
+  osThreadDef(LEDTask, StartLEDTask, osPriorityNormal, 0, 128);
+  LEDTaskHandle = osThreadCreate(osThread(LEDTask), NULL);
+
+  /* definition and creation of CANTask */
+  osThreadDef(CANTask, StartCANTask, osPriorityNormal, 0, 128);
+  CANTaskHandle = osThreadCreate(osThread(CANTask), NULL);
+
+  /* definition and creation of UARTTask */
+  osThreadDef(UARTTask, StartUARTTask, osPriorityBelowNormal, 0, 128);
+  UARTTaskHandle = osThreadCreate(osThread(UARTTask), NULL);
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  
-  uint32_t last_can_tx = 0; // Kronometre değişkenimiz
-
   while (1)
   {
-    /* 1. KIRMIZI LED (PA3) GÜNCELLEMESİ (Her an kesintisiz çalışır) */
-    LL_TIM_OC_SetCompareCH4(TIM2, pwm_duty);
-    
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    
-    /* 2. YEŞİL LED (PB12) GÜNCELLEMESİ (Sadece GDB'den kontrol edilir) */
-    if (led_state == 0) 
-    {
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-    }
-    else if (led_state == 1) 
-    {
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
-    }
-
-    /* 3. CAN BUS GÖNDERİMİ (TIMER2 TİKLERİ İLE) */
-    if (my_tick - last_can_tx >= 50)
-    {
-        last_can_tx = my_tick; // Saati sıfırla
-        
-        static uint8_t id_index = 0; 
-        uint32_t pseudo_random = my_tick;
-
-        TxHeader.DLC = 8;                         
-        TxHeader.IDE = CAN_ID_STD;                
-        TxHeader.RTR = CAN_RTR_DATA;              
-        TxHeader.StdId = FIXED_IDS[id_index];  
-
-        TxData[0] = (pseudo_random >> 24) & 0xFF;
-        TxData[1] = (pseudo_random >> 16) & 0xFF;
-        TxData[2] = (pseudo_random >> 8) & 0xFF;
-        TxData[3] = pseudo_random & 0xFF;
-        TxData[4] = (pseudo_random * 3) & 0xFF;
-        TxData[5] = (pseudo_random * 7) & 0xFF;
-        TxData[6] = (pseudo_random * 11) & 0xFF;
-        TxData[7] = (pseudo_random * 13) & 0xFF;
-
-        HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
-
-        id_index++;
-        if (id_index >= 4) id_index = 0;
-    }
-    
-    /* 4. USART1 PERİYODİK BİLGİ GÖNDERİMİ (5 saniyede bir) */
-    static uint32_t last_usart_tx = 0;
-    if (my_tick - last_usart_tx >= 5000)
-    {
-        last_usart_tx = my_tick;
-        USART1_SendString("taylan buradaydi.\r\n");
-    }
-
-    /* 5. USART ALINAN VERİ KONTROLÜ (RTOS-benzeri Flag mekanizması) */
-    if (usart_rx_flag == 1)
-    {
-        usart_rx_flag = 0; // Flag temizle
-        uint16_t temp_duty = usart_rx_value;
-        if (temp_duty > 1000) temp_duty = 1000;
-        pwm_duty = temp_duty;
-    }
-
-    /* 6. CAN BUS ALINAN VERİ KONTROLÜ (RTOS-benzeri Flag mekanizması) */
-    if (can_rx_flag == 1)
-    {
-        can_rx_flag = 0; // Flag temizle
-        if (RxHeader.StdId == 0x555 && RxHeader.DLC == 2)
-        {
-            uint16_t temp_duty = (RxData[0] << 8) | RxData[1];
-            if (temp_duty > 1000) temp_duty = 1000;
-            pwm_duty = temp_duty;
-        }
-    }
-    
-    /* İşlemci geri kalan zamanda serbesttir, bayrakları ve olayları anında okur! */
   }
   /* USER CODE END 3 */
 }
@@ -344,7 +318,7 @@ static void MX_TIM2_Init(void)
   LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_TIM2);
 
   /* TIM2 interrupt Init */
-  NVIC_SetPriority(TIM2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
+  NVIC_SetPriority(TIM2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),5, 0));
   NVIC_EnableIRQ(TIM2_IRQn);
 
   /* USER CODE BEGIN TIM2_Init 1 */
@@ -417,7 +391,7 @@ static void MX_USART1_UART_Init(void)
   LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USART1 interrupt Init */
-  NVIC_SetPriority(USART1_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
+  NVIC_SetPriority(USART1_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),5, 0));
   NVIC_EnableIRQ(USART1_IRQn);
 
   /* USER CODE BEGIN USART1_Init 1 */
@@ -504,7 +478,123 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     }
   }
 }
+
+/* FreeRTOS Görev Tanımlamaları */
+void StartLEDTask(void const * argument)
+{
+  for(;;)
+  {
+    /* 1. KIRMIZI LED (PA3) GÜNCELLEMESİ */
+    LL_TIM_OC_SetCompareCH4(TIM2, pwm_duty);
+
+    /* 2. YEŞİL LED (PB12) GÜNCELLEMESİ (Sadece GDB'den kontrol edilir) */
+    if (led_state == 0) 
+    {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+    }
+    else if (led_state == 1) 
+    {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+    }
+
+    osDelay(10);
+  }
+}
+
+void StartCANTask(void const * argument)
+{
+  static uint32_t last_can_tx = 0;
+  for(;;)
+  {
+    /* 1. CAN ALINAN VERİ KONTROLÜ (RTOS-benzeri Flag mekanizması) */
+    if (can_rx_flag == 1)
+    {
+      can_rx_flag = 0; // Flag temizle
+      if (RxHeader.StdId == 0x555 && RxHeader.DLC == 2)
+      {
+        uint16_t temp_duty = (RxData[0] << 8) | RxData[1];
+        if (temp_duty > 1000) temp_duty = 1000;
+        pwm_duty = temp_duty;
+      }
+    }
+
+    /* 2. CAN GÖNDERİMİ (Her 50 ms'de bir) */
+    uint32_t current_tick = osKernelSysTick();
+    if (current_tick - last_can_tx >= 50)
+    {
+      last_can_tx = current_tick;
+      
+      static uint8_t id_index = 0; 
+      uint32_t pseudo_random = current_tick;
+
+      TxHeader.DLC = 8;                         
+      TxHeader.IDE = CAN_ID_STD;                
+      TxHeader.RTR = CAN_RTR_DATA;              
+      TxHeader.StdId = FIXED_IDS[id_index];  
+
+      TxData[0] = (pseudo_random >> 24) & 0xFF;
+      TxData[1] = (pseudo_random >> 16) & 0xFF;
+      TxData[2] = (pseudo_random >> 8) & 0xFF;
+      TxData[3] = pseudo_random & 0xFF;
+      TxData[4] = (pseudo_random * 3) & 0xFF;
+      TxData[5] = (pseudo_random * 7) & 0xFF;
+      TxData[6] = (pseudo_random * 11) & 0xFF;
+      TxData[7] = (pseudo_random * 13) & 0xFF;
+
+      HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+
+      id_index++;
+      if (id_index >= 4) id_index = 0;
+    }
+
+    osDelay(10);
+  }
+}
+
+void StartUARTTask(void const * argument)
+{
+  static uint32_t last_usart_tx = 0;
+  for(;;)
+  {
+    /* 1. USART ALINAN VERİ KONTROLÜ (RTOS-benzeri Flag mekanizması) */
+    if (usart_rx_flag == 1)
+    {
+      usart_rx_flag = 0; // Flag temizle
+      uint16_t temp_duty = usart_rx_value;
+      if (temp_duty > 1000) temp_duty = 1000;
+      pwm_duty = temp_duty;
+    }
+
+    /* 2. USART1 PERİYODİK BİLGİ GÖNDERİMİ (5 saniyede bir) */
+    uint32_t current_tick = osKernelSysTick();
+    if (current_tick - last_usart_tx >= 5000)
+    {
+      last_usart_tx = current_tick;
+      USART1_SendString("taylan buradaydi.\r\n");
+    }
+
+    osDelay(20);
+  }
+}
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END 5 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
