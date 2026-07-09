@@ -57,9 +57,8 @@
 /* External variables --------------------------------------------------------*/
 extern CAN_HandleTypeDef hcan;
 extern TIM_HandleTypeDef htim2;
-extern UART_HandleTypeDef huart3;
 /* USER CODE BEGIN EV */
-
+extern volatile int pwm_duty;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -229,17 +228,31 @@ void TIM2_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles USART3 global interrupt.
+  * @brief This function handles USART1 global interrupt.
   */
-void USART3_IRQHandler(void)
+void USART1_IRQHandler(void)
 {
-  /* USER CODE BEGIN USART3_IRQn 0 */
+  /* USER CODE BEGIN USART1_IRQn 0 */
+  if (LL_USART_IsActiveFlag_RXNE(USART1) && LL_USART_IsEnabledIT_RXNE(USART1))
+  {
+    uint8_t data = LL_USART_ReceiveData8(USART1);
+    
+    static uint8_t rx_byte_count = 0;
+    static uint8_t temp_rx_data[2];
+    
+    temp_rx_data[rx_byte_count++] = data;
+    if (rx_byte_count >= 2)
+    {
+      rx_byte_count = 0;
+      uint16_t temp_duty = (temp_rx_data[0] << 8) | temp_rx_data[1];
+      if (temp_duty > 1000) temp_duty = 1000;
+      pwm_duty = temp_duty;
+    }
+  }
+  /* USER CODE END USART1_IRQn 0 */
+  /* USER CODE BEGIN USART1_IRQn 1 */
 
-  /* USER CODE END USART3_IRQn 0 */
-  HAL_UART_IRQHandler(&huart3);
-  /* USER CODE BEGIN USART3_IRQn 1 */
-
-  /* USER CODE END USART3_IRQn 1 */
+  /* USER CODE END USART1_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

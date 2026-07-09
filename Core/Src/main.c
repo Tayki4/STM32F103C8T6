@@ -1,4 +1,4 @@
-﻿/* USER CODE BEGIN Header */
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -34,8 +34,6 @@ CAN_HandleTypeDef hcan;
 
 TIM_HandleTypeDef htim2;
 
-UART_HandleTypeDef huart3;
-
 /* USER CODE BEGIN PV */
 uint8_t x = 0;
 int y = 0;
@@ -68,10 +66,6 @@ uint8_t TxData[8];    // 8 Byte'lık CAN veri çerçevesi (Frame)
 uint32_t TxMailbox;   // Verinin yollanacağı posta kutusu
 
 
-CAN_TxHeaderTypeDef TxHeader;
-uint8_t TxData[8];
-uint32_t TxMailbox;
-
 /* Bilgisayardan gelen verileri okumak için gereken değişkenler */
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t RxData[8];
@@ -86,10 +80,11 @@ const uint32_t FIXED_IDS[4] = {0x10A, 0x20B, 0x30C, 0x40D};
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_USART3_UART_Init(void);
 static void MX_CAN_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void USART1_SendChar(char c);
+void USART1_SendString(const char *str);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -130,13 +125,13 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM2_Init();
-  MX_USART3_UART_Init();
   MX_CAN_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
     HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
   
-  /* Tam 2 Byte'lık veri paketi beklediğimizi belirtiyoruz */
-  HAL_UART_Receive_IT(&huart3, rx_data, 2);
+  /* USART1 RXNE kesmesini aktif et */
+  LL_USART_EnableIT_RXNE(USART1);
 
 /* CAN Filtre Ayarları (Tüm ID'leri kabul edecek şekilde varsayılan ayar) */
   CAN_FilterTypeDef canfilterconfig;
@@ -212,10 +207,17 @@ int main(void)
         if (id_index >= 4) id_index = 0;
     }
     
+    /* 4. USART1 PERİYODİK BİLGİ GÖNDERİMİ (5 saniyede bir) */
+    static uint32_t last_usart_tx = 0;
+    if (HAL_GetTick() - last_usart_tx >= 5000)
+    {
+        last_usart_tx = HAL_GetTick();
+        USART1_SendString("taylan buradaydi.\r\n");
+    }
+    
     /* İşlemci geri kalan zamanda serbesttir, Python'dan gelen verileri anında okur! */
   }
   /* USER CODE END 3 */
-
 }
 
 /**
@@ -354,35 +356,59 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief USART3 Initialization Function
+  * @brief USART1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART3_UART_Init(void)
+static void MX_USART1_UART_Init(void)
 {
 
-  /* USER CODE BEGIN USART3_Init 0 */
+  /* USER CODE BEGIN USART1_Init 0 */
 
-  /* USER CODE END USART3_Init 0 */
+  /* USER CODE END USART1_Init 0 */
 
-  /* USER CODE BEGIN USART3_Init 1 */
+  LL_USART_InitTypeDef USART_InitStruct = {0};
 
-  /* USER CODE END USART3_Init 1 */
-  huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
-  huart3.Init.WordLength = UART_WORDLENGTH_8B;
-  huart3.Init.StopBits = UART_STOPBITS_1;
-  huart3.Init.Parity = UART_PARITY_NONE;
-  huart3.Init.Mode = UART_MODE_TX_RX;
-  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART3_Init 2 */
+  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-  /* USER CODE END USART3_Init 2 */
+  /* Peripheral clock enable */
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_USART1);
+
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_GPIOA);
+  /**USART1 GPIO Configuration
+  PA9   ------> USART1_TX
+  PA10   ------> USART1_RX
+  */
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_9;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_10;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_FLOATING;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* USART1 interrupt Init */
+  NVIC_SetPriority(USART1_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
+  NVIC_EnableIRQ(USART1_IRQn);
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  USART_InitStruct.BaudRate = 115200;
+  USART_InitStruct.DataWidth = LL_USART_DATAWIDTH_8B;
+  USART_InitStruct.StopBits = LL_USART_STOPBITS_1;
+  USART_InitStruct.Parity = LL_USART_PARITY_NONE;
+  USART_InitStruct.TransferDirection = LL_USART_DIRECTION_TX_RX;
+  USART_InitStruct.HardwareFlowControl = LL_USART_HWCONTROL_NONE;
+  USART_InitStruct.OverSampling = LL_USART_OVERSAMPLING_16;
+  LL_USART_Init(USART1, &USART_InitStruct);
+  LL_USART_ConfigAsyncMode(USART1);
+  LL_USART_Enable(USART1);
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
 
 }
 
@@ -420,53 +446,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PA9 PA10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_9|GPIO_PIN_10;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void USART1_SendChar(char c)
 {
-  if (huart->Instance == USART3)
-  {
-    uint16_t temp_duty = (rx_data[0] << 8) | rx_data[1];
-    if (temp_duty > 1000) temp_duty = 1000;
-    
-    pwm_duty = temp_duty;
-    
-    /* Anında tepki için doğrudan donanıma yaz */
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
-    
-    HAL_UART_Receive_IT(&huart3, rx_data, 2);
-  }
+  while (!LL_USART_IsActiveFlag_TXE(USART1));
+  LL_USART_TransmitData8(USART1, c);
 }
 
-void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+void USART1_SendString(const char *str)
 {
-  if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+  while (*str)
   {
-    /* Eğer mesaj bizim Python arayüzünden (0x555) geliyorsa */
-    if (RxHeader.StdId == 0x555)
-    {
-       /* Gelen ilk 2 byte'ı birleştirip 16 bitlik sayı (0-1000) elde et */
-       uint16_t temp_duty = (RxData[0] << 8) | RxData[1];
-       
-       /* Sınır koruması */
-       if (temp_duty > 1000) temp_duty = 1000;
-       
-       /* Doğrudan parlaklık değişkenine yaz */
-       pwm_duty = temp_duty;
-    }
+    USART1_SendChar(*str++);
   }
 }
-
 /* USER CODE END 4 */
 
 /**
