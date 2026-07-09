@@ -56,9 +56,11 @@
 
 /* External variables --------------------------------------------------------*/
 extern CAN_HandleTypeDef hcan;
-extern TIM_HandleTypeDef htim2;
 /* USER CODE BEGIN EV */
 extern volatile int pwm_duty;
+extern volatile uint8_t usart_rx_flag;
+extern volatile uint16_t usart_rx_value;
+extern volatile uint32_t my_tick;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -219,9 +221,12 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
 void TIM2_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM2_IRQn 0 */
-
+  if (LL_TIM_IsActiveFlag_UPDATE(TIM2) && LL_TIM_IsEnabledIT_UPDATE(TIM2))
+  {
+    LL_TIM_ClearFlag_UPDATE(TIM2);
+    my_tick++;
+  }
   /* USER CODE END TIM2_IRQn 0 */
-  HAL_TIM_IRQHandler(&htim2);
   /* USER CODE BEGIN TIM2_IRQn 1 */
 
   /* USER CODE END TIM2_IRQn 1 */
@@ -244,9 +249,8 @@ void USART1_IRQHandler(void)
     if (rx_byte_count >= 2)
     {
       rx_byte_count = 0;
-      uint16_t temp_duty = (temp_rx_data[0] << 8) | temp_rx_data[1];
-      if (temp_duty > 1000) temp_duty = 1000;
-      pwm_duty = temp_duty;
+      usart_rx_value = (temp_rx_data[0] << 8) | temp_rx_data[1];
+      usart_rx_flag = 1;
     }
   }
   /* USER CODE END USART1_IRQn 0 */

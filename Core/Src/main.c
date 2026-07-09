@@ -32,11 +32,15 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan;
 
-TIM_HandleTypeDef htim2;
-
 /* USER CODE BEGIN PV */
 uint8_t x = 0;
 int y = 0;
+
+/* RTOS-like Event Flags and Custom Tick Variable */
+volatile uint8_t usart_rx_flag = 0;
+volatile uint16_t usart_rx_value = 0;
+volatile uint8_t can_rx_flag = 0;
+volatile uint32_t my_tick = 0;
 
 
 /* PWM Duty Cycle for LED brightness on PA3
@@ -128,7 +132,10 @@ int main(void)
   MX_CAN_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
+    /* TIM2 PWM ve zamanlayıcı ayarları (LL kullanarak) */
+    LL_TIM_CC_EnableChannel(TIM2, LL_TIM_CHANNEL_CH4);
+    LL_TIM_EnableIT_UPDATE(TIM2);
+    LL_TIM_EnableCounter(TIM2);
   
   /* USART1 RXNE kesmesini aktif et */
   LL_USART_EnableIT_RXNE(USART1);
@@ -162,7 +169,7 @@ int main(void)
   while (1)
   {
     /* 1. KIRMIZI LED (PA3) GÜNCELLEMESİ (Her an kesintisiz çalışır) */
-    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, pwm_duty);
+    LL_TIM_OC_SetCompareCH4(TIM2, pwm_duty);
     
     /* USER CODE END WHILE */
 
@@ -178,14 +185,13 @@ int main(void)
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
     }
 
-    /* 3. CAN BUS GÖNDERİMİ (HAL_Delay OLMADAN KRONOMETRE İLE) */
-    /* İşlemci burada donmaz! Sadece saate bakar, 50ms geçtiyse içeri girer. */
-    if (HAL_GetTick() - last_can_tx >= 50)
+    /* 3. CAN BUS GÖNDERİMİ (TIMER2 TİKLERİ İLE) */
+    if (my_tick - last_can_tx >= 50)
     {
-        last_can_tx = HAL_GetTick(); // Saati sıfırla
+        last_can_tx = my_tick; // Saati sıfırla
         
         static uint8_t id_index = 0; 
-        uint32_t pseudo_random = HAL_GetTick();
+        uint32_t pseudo_random = my_tick;
 
         TxHeader.DLC = 8;                         
         TxHeader.IDE = CAN_ID_STD;                
@@ -209,13 +215,34 @@ int main(void)
     
     /* 4. USART1 PERİYODİK BİLGİ GÖNDERİMİ (5 saniyede bir) */
     static uint32_t last_usart_tx = 0;
-    if (HAL_GetTick() - last_usart_tx >= 5000)
+    if (my_tick - last_usart_tx >= 5000)
     {
-        last_usart_tx = HAL_GetTick();
+        last_usart_tx = my_tick;
         USART1_SendString("taylan buradaydi.\r\n");
     }
+
+    /* 5. USART ALINAN VERİ KONTROLÜ (RTOS-benzeri Flag mekanizması) */
+    if (usart_rx_flag == 1)
+    {
+        usart_rx_flag = 0; // Flag temizle
+        uint16_t temp_duty = usart_rx_value;
+        if (temp_duty > 1000) temp_duty = 1000;
+        pwm_duty = temp_duty;
+    }
+
+    /* 6. CAN BUS ALINAN VERİ KONTROLÜ (RTOS-benzeri Flag mekanizması) */
+    if (can_rx_flag == 1)
+    {
+        can_rx_flag = 0; // Flag temizle
+        if (RxHeader.StdId == 0x555 && RxHeader.DLC == 2)
+        {
+            uint16_t temp_duty = (RxData[0] << 8) | RxData[1];
+            if (temp_duty > 1000) temp_duty = 1000;
+            pwm_duty = temp_duty;
+        }
+    }
     
-    /* İşlemci geri kalan zamanda serbesttir, Python'dan gelen verileri anında okur! */
+    /* İşlemci geri kalan zamanda serbesttir, bayrakları ve olayları anında okur! */
   }
   /* USER CODE END 3 */
 }
@@ -308,50 +335,50 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 0 */
 
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
+  LL_TIM_InitTypeDef TIM_InitStruct = {0};
+  LL_TIM_OC_InitTypeDef TIM_OC_InitStruct = {0};
+
+  LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* Peripheral clock enable */
+  LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_TIM2);
+
+  /* TIM2 interrupt Init */
+  NVIC_SetPriority(TIM2_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
+  NVIC_EnableIRQ(TIM2_IRQn);
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 71;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 999;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
+  TIM_InitStruct.Prescaler = 71;
+  TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
+  TIM_InitStruct.Autoreload = 999;
+  TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
+  LL_TIM_Init(TIM2, &TIM_InitStruct);
+  LL_TIM_DisableARRPreload(TIM2);
+  LL_TIM_SetClockSource(TIM2, LL_TIM_CLOCKSOURCE_INTERNAL);
+  LL_TIM_OC_EnablePreload(TIM2, LL_TIM_CHANNEL_CH4);
+  TIM_OC_InitStruct.OCMode = LL_TIM_OCMODE_PWM1;
+  TIM_OC_InitStruct.OCState = LL_TIM_OCSTATE_DISABLE;
+  TIM_OC_InitStruct.OCNState = LL_TIM_OCSTATE_DISABLE;
+  TIM_OC_InitStruct.CompareValue = 0;
+  TIM_OC_InitStruct.OCPolarity = LL_TIM_OCPOLARITY_HIGH;
+  LL_TIM_OC_Init(TIM2, LL_TIM_CHANNEL_CH4, &TIM_OC_InitStruct);
+  LL_TIM_OC_DisableFast(TIM2, LL_TIM_CHANNEL_CH4);
+  LL_TIM_SetTriggerOutput(TIM2, LL_TIM_TRGO_RESET);
+  LL_TIM_DisableMasterSlaveMode(TIM2);
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
-  HAL_TIM_MspPostInit(&htim2);
+  LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_GPIOA);
+  /**TIM2 GPIO Configuration
+  PA3   ------> TIM2_CH4
+  */
+  GPIO_InitStruct.Pin = LL_GPIO_PIN_3;
+  GPIO_InitStruct.Mode = LL_GPIO_MODE_ALTERNATE;
+  GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+  LL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 }
 
@@ -463,6 +490,18 @@ void USART1_SendString(const char *str)
   while (*str)
   {
     USART1_SendChar(*str++);
+  }
+}
+
+/* CAN RX Kesme Geri Bildirim Fonksiyonu */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  if (hcan->Instance == CAN1)
+  {
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+    {
+      can_rx_flag = 1; // CAN Mesajı alındı bayrağını set et
+    }
   }
 }
 /* USER CODE END 4 */
