@@ -48,7 +48,15 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+extern volatile uint8_t can_rx_flag;
+extern volatile uint16_t can_rx_value;
 
+extern volatile uint8_t usart_rx_flag;
+extern volatile uint16_t usart_rx_value;
+
+extern volatile int pwm_duty;
+extern volatile int led_state;
+extern volatile uint32_t timer_tick;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

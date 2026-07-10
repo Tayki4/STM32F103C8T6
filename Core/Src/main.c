@@ -9,7 +9,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
-#include "stm32f1xx_ll_tim.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -34,19 +33,16 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan;
 
-/* osThreadId defaultTaskHandle; (Gereksiz olduğu için silindi) */
-/* USER CODE BEGIN PV */
-extern volatile uint32_t timer_tick;
 osThreadId CANTaskHandle;
 osThreadId UARTTaskHandle;
-osMessageQId usartQueueHandle;
-osMessageQId canQueueHandle;
-uint8_t x = 0;
-int y = 0;
+/* USER CODE BEGIN PV */
+volatile uint8_t can_rx_flag = 0;
+volatile uint16_t can_rx_value = 0;
 
-/* Custom Tick Variable for legacy code (if any) */
-volatile uint32_t my_tick = 0;
+volatile uint8_t usart_rx_flag = 0;
+volatile uint16_t usart_rx_value = 0;
 
+volatile uint32_t timer_tick = 0; // Donanım sayacı
 
 /* PWM Duty Cycle for LED brightness on PA3
    0    = LED OFF
@@ -54,16 +50,14 @@ volatile uint32_t my_tick = 0;
    1000 = %100 Brightness
 */
 volatile int pwm_duty = 0; 
+volatile int led_state = 2; // PB12 LED state
+
 uint8_t rx_data[2]; // Sadece 2 byte (16 bit) ham veri tutacak
 
 /* Button states */
 GPIO_PinState pa9_state;
 GPIO_PinState pa10_state;
-GPIO_PinState pc13_state;
 
-volatile int led_state = 2; 
-
-/* CHANGED to 'volatile int' for perfect GDB compatibility. */
 /* UART Haberleşme Değişkenleri */
 
 uint8_t rx_byte;          // Gelen tek bir karakteri tutar
@@ -91,13 +85,12 @@ static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_CAN_Init(void);
 static void MX_USART1_UART_Init(void);
-/* void StartDefaultTask(void const * argument); (Silindi) */
+void StartCANTask(void const * argument);
+void StartUARTTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 void USART1_SendChar(char c);
 void USART1_SendString(const char *str);
-void StartCANTask(void const * argument);
-void StartUARTTask(void const * argument);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -171,12 +164,6 @@ int main(void)
 
   /* USER CODE END 2 */
 
-// ****tick kullanmaya TEVBE et
-// timer'ı 1 ms periyoda ya da 1kHz frekansa ayarla, ctr'ı ms ctr oarak kullanabilsin
-// urat send char fonktaki blocking while yerine timeout!!!
-// kullanılmayan rtos tasklar iptal.
-// gerekirse timer interrupt'ı ve rtos task priority sıralamasını cubemxten güncelle.
-
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
@@ -190,17 +177,10 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  osMessageQDef(usartQueue, 16, uint16_t);
-  usartQueueHandle = osMessageCreate(osMessageQ(usartQueue), NULL);
-
-  osMessageQDef(canQueue, 16, uint16_t);
-  canQueueHandle = osMessageCreate(osMessageQ(canQueue), NULL);
+  /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* defaultTask gereksiz olduğu için silindi. Toplam task sayısı düşürüldü. */
-
-  /* USER CODE BEGIN RTOS_THREADS */
   /* definition and creation of CANTask */
   osThreadDef(CANTask, StartCANTask, osPriorityNormal, 0, 128);
   CANTaskHandle = osThreadCreate(osThread(CANTask), NULL);
@@ -208,12 +188,16 @@ int main(void)
   /* definition and creation of UARTTask */
   osThreadDef(UARTTask, StartUARTTask, osPriorityNormal, 0, 128);
   UARTTaskHandle = osThreadCreate(osThread(UARTTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
   osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -482,108 +466,112 @@ void USART1_SendString(const char *str)
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
 }
+/* USER CODE END 4 */
 
-/* FreeRTOS Görev Tanımlamaları */
+/* USER CODE BEGIN Header_StartCANTask */
+/**
+  * @brief  Function implementing the CANTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartCANTask */
 void StartCANTask(void const * argument)
 {
+  /* USER CODE BEGIN 5 */
   uint32_t random_val = 0;
   uint8_t id_index = 0;
-  
   uint32_t last_can_tx_tick = timer_tick;
   
   for(;;)
   {
-    /* 1. Olay Tabanlı CAN Veri Bekleme (Sadece 1ms uyuma payı, FreeRTOS Timeout yerine) */
-    osEvent evt = osMessageGet(canQueueHandle, 1);
-    
-    if (evt.status == osEventMessage)
+    if (can_rx_flag == 1)
     {
-      uint16_t temp_duty = evt.value.v;
+      can_rx_flag = 0; 
+      uint16_t temp_duty = can_rx_value;
       if (temp_duty > 1000) temp_duty = 1000;
       pwm_duty = temp_duty;
-      
-      /* LED parlaklığını güncelle (LL kullanılarak) */
       LL_TIM_OC_SetCompareCH4(TIM2, pwm_duty);
     }
 
-    /* 2. BARE-METAL CAN GÖNDERİMİ (Her 50 ms'de bir, Timer üzerinden) */
     if ((timer_tick - last_can_tx_tick) >= 50)
     {
       last_can_tx_tick = timer_tick;
       random_val++;
 
-      // 8 Byte veriyi 2 adet 32-bit register (TDLR, TDHR) için paketle
       uint32_t tdlr = (random_val & 0xFF) | (((random_val >> 8) & 0xFF) << 8) | (((random_val >> 16) & 0xFF) << 16) | (((random_val >> 24) & 0xFF) << 24);
       uint32_t tdhr = ((random_val * 3) & 0xFF) | (((random_val * 7) & 0xFF) << 8) | (((random_val * 11) & 0xFF) << 16) | (((random_val * 13) & 0xFF) << 24);
 
-      // Boş bir posta kutusu (Mailbox 0) var mı diye kontrol et (TME0 biti)
       if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0)
       {
         CAN1->sTxMailBox[0].TDLR = tdlr;
         CAN1->sTxMailBox[0].TDHR = tdhr;
-        CAN1->sTxMailBox[0].TDTR = 8; // DLC = 8
-        
-        // Standart ID'yi yerleştir ve gönderimi (TXRQ) başlat
+        CAN1->sTxMailBox[0].TDTR = 8;
         CAN1->sTxMailBox[0].TIR = (FIXED_IDS[id_index] << 21) | CAN_TI0R_TXRQ;
       }
-
       id_index++;
       if (id_index >= 4) id_index = 0;
     }
+    osDelay(1);
   }
+  /* USER CODE END 5 */
 }
 
+/* USER CODE BEGIN Header_StartUARTTask */
+/**
+* @brief Function implementing the UARTTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartUARTTask */
 void StartUARTTask(void const * argument)
 {
+  /* USER CODE BEGIN StartUARTTask */
   uint32_t last_uart_tx_tick = timer_tick;
   for(;;)
   {
-    /* 1. Olay Tabanlı USART Veri Bekleme */
-    osEvent evt = osMessageGet(usartQueueHandle, 1);
-    
-    if (evt.status == osEventMessage)
+    if (usart_rx_flag == 1)
     {
-      uint16_t temp_duty = evt.value.v;
+      usart_rx_flag = 0; 
+      uint16_t temp_duty = usart_rx_value;
       if (temp_duty > 1000) temp_duty = 1000;
       pwm_duty = temp_duty;
-      
-      /* LED parlaklığını güncelle (LL kullanılarak) */
       LL_TIM_OC_SetCompareCH4(TIM2, pwm_duty);
     }
 
-    /* 2. YEŞİL LED (PB12) GÜNCELLEMESİ (LL kullanılarak) */
-    if (led_state == 0) 
-    {
-      LL_GPIO_ResetOutputPin(GPIOB, LL_GPIO_PIN_12);
-    }
-    else if (led_state == 1) 
-    {
-      LL_GPIO_SetOutputPin(GPIOB, LL_GPIO_PIN_12);
-    }
+    if (led_state == 0) LL_GPIO_ResetOutputPin(GPIOB, LL_GPIO_PIN_12);
+    else if (led_state == 1) LL_GPIO_SetOutputPin(GPIOB, LL_GPIO_PIN_12);
 
-    /* 3. USART1 PERİYODİK BİLGİ GÖNDERİMİ (Timer üzerinden 5 saniyede bir) */
     if ((timer_tick - last_uart_tx_tick) >= 5000)
     {
       last_uart_tx_tick = timer_tick;
       USART1_SendString("taylan buradaydi.\r\n");
     }
+    osDelay(1);
   }
-}
-/* SysTick'i devre dışı bırakmak için HAL tick ilklendirmesini eziyoruz */
-HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
-{
-  /* SysTick'i başlatmıyoruz, TIM2 kesmesi üzerinden zaman takibi yapılacaktır */
-  return HAL_OK;
+  /* USER CODE END StartUARTTask */
 }
 
-/* FreeRTOS'un SysTick başlatma fonksiyonunu ezerek SysTick kullanımını engelliyoruz */
-void vPortSetupTimerInterrupt(void)
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM4 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  /* TIM2 zaten main.c içinde başlatıldığı için burada işlem yapmıyoruz */
-}
-/* USER CODE END 4 */
+  /* USER CODE BEGIN Callback 0 */
 
-/* defaultTask tamamen kaldırıldı, sistem boşuna yorulmayacak. */
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM4)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

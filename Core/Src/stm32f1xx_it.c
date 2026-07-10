@@ -20,9 +20,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f1xx_it.h"
-#include "cmsis_os.h"
-#include "FreeRTOS.h"
-#include "task.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -59,11 +56,10 @@
 
 /* External variables --------------------------------------------------------*/
 extern CAN_HandleTypeDef hcan;
+extern TIM_HandleTypeDef htim4;
+
 /* USER CODE BEGIN EV */
 extern volatile int pwm_duty;
-extern osMessageQId usartQueueHandle;
-extern osMessageQId canQueueHandle;
-volatile uint32_t timer_tick = 0; /* Tamamen donanımsal zaman sayacı (SysTick yerine) */
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -157,18 +153,7 @@ void DebugMon_Handler(void)
   /* USER CODE END DebugMonitor_IRQn 1 */
 }
 
-/**
-  * @brief This function handles System tick timer.
-  */
-void SysTick_Handler(void)
-{
-  /* USER CODE BEGIN SysTick_IRQn 0 */
 
-  /* USER CODE END SysTick_IRQn 0 */
-  /* USER CODE BEGIN SysTick_IRQn 1 */
-
-  /* USER CODE END SysTick_IRQn 1 */
-}
 
 /******************************************************************************/
 /* STM32F1xx Peripheral Interrupt Handlers                                    */
@@ -196,9 +181,9 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
       uint8_t d0 = (uint8_t)(rdlr & 0xFF);
       uint8_t d1 = (uint8_t)((rdlr >> 8) & 0xFF);
       uint16_t value = (d0 << 8) | d1;
-      
-      // Sadece hesaplanmış saf veriyi Task'a yolla
-      osMessagePut(canQueueHandle, value, 0);
+      // Flag sistemi ile değeri güncelle
+      can_rx_value = value;
+      can_rx_flag = 1;
     }
     
     // FIFO0'ı donanım seviyesinde serbest bırak
@@ -224,19 +209,6 @@ void TIM2_IRQHandler(void)
     
     // Her 1 milisaniyede donanım sayacını artır (SysTick'ten bağımsız)
     timer_tick++;
-    
-    // Increment HAL tick
-    HAL_IncTick();
-    
-    // Increment FreeRTOS tick
-#if (INCLUDE_xTaskGetSchedulerState == 1 )
-    if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
-    {
-#endif /* INCLUDE_xTaskGetSchedulerState */
-      xPortSysTickHandler();
-#if (INCLUDE_xTaskGetSchedulerState == 1 )
-    }
-#endif /* INCLUDE_xTaskGetSchedulerState */
   }
   /* USER CODE END TIM2_IRQn 0 */
   /* USER CODE BEGIN TIM2_IRQn 1 */
@@ -288,9 +260,9 @@ void USART1_IRQHandler(void)
     {
       rx_byte_count = 0;
       uint16_t value = (temp_rx_data[0] << 8) | temp_rx_data[1];
-      
-      /* FreeRTOS Queue üzerinden ISR'dan Task'a veri gönderimi (Non-blocking) */
-      osMessagePut(usartQueueHandle, value, 0);
+      /* Flag sistemi ile veriyi global olarak işaretle */
+      usart_rx_value = value;
+      usart_rx_flag = 1;
     }
   }
   /* USER CODE END USART1_IRQn 0 */
