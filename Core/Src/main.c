@@ -109,7 +109,7 @@ int main(void)
   
   /* 0 = LED OFF, 1 = LED ON */
   
-  
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/

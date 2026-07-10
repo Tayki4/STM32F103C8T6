@@ -94,12 +94,12 @@ HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
     if (status == HAL_OK)
     {
     /* Enable the TIM4 global Interrupt */
-        HAL_NVIC_EnableIRQ(SysTick_IRQn);
+        HAL_NVIC_EnableIRQ(TIM4_IRQn);
       /* Configure the SysTick IRQ priority */
       if (TickPriority < (1UL << __NVIC_PRIO_BITS))
       {
         /* Configure the TIM IRQ priority */
-        HAL_NVIC_SetPriority(SysTick_IRQn, TickPriority, 0U);
+        HAL_NVIC_SetPriority(TIM4_IRQn, TickPriority, 0U);
         uwTickPrio = TickPriority;
       }
       else
